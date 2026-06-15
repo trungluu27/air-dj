@@ -1,0 +1,19 @@
+services:
+  airdj:
+    build: .
+    ports:
+      - "7860:7860"
+    devices:
+      # Webcam - đổi thành /dev/video1 nếu máy bạn dùng camera khác
+      - /dev/video0:/dev/video0
+      # Audio output (ALSA)
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+      - video
+    environment:
+      - AUDIODRIVER=alsa
+    volumes:
+      # Giữ lại file nhạc đã upload giữa các lần restart
+      - ./assets/tracks:/app/assets/tracks
+    restart: unless-stopped
