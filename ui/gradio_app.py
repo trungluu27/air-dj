@@ -14,7 +14,9 @@ from camera.hand_tracker import HandTracker
 from config.settings import DEFAULT_SETTINGS
 from core.session import DJSession
 from gestures.gesture_mapping import GestureMapper
+from recording.recorder import VideoAudioRecorder
 from ui.overlay import Overlay
+from ui.portrait import to_portrait_frame
 
 logger = logging.getLogger(__name__)
 CAMERA_REFRESH_SECONDS = 0.2
@@ -30,9 +32,14 @@ class AirDJRuntime:
     overlay: Overlay | None = None
     camera_capture: Any | None = None
     camera_index: int = 0
+    recorder: VideoAudioRecorder = field(
+        default_factory=lambda: VideoAudioRecorder(Path("assets/recordings"))
+    )
+    last_recording_path: Path | None = None
 
     def __post_init__(self) -> None:
         self.player = AudioPlayer(self.mixer)
+        self.player.audio_sinks.append(self.recorder.write_audio)
 
     def start_camera(self) -> str:
         if self.camera_capture is not None:
@@ -75,6 +82,11 @@ class AirDJRuntime:
             )
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame = to_portrait_frame(
+            rgb_frame,
+            DEFAULT_SETTINGS.portrait_width,
+            DEFAULT_SETTINGS.portrait_height,
+        )
         return self.process_frame(rgb_frame)
 
     def process_frame(self, frame: Any) -> tuple[Any, dict[str, object], float, float, float, str, str]:
@@ -98,6 +110,7 @@ class AirDJRuntime:
                 features,
                 status=f"{len(features)} hand(s)",
             )
+            self.recorder.write_frame(annotated)
             return (
                 annotated,
                 self.session.as_dict(),
@@ -143,6 +156,22 @@ class AirDJRuntime:
         except Exception as exc:
             logger.exception("Failed to stop audio")
             return f"Audio output stop failed: {exc}"
+
+    def start_recording(self) -> tuple[str, None]:
+        if self.camera_capture is None:
+            return "Start Camera before recording.", None
+        path = self.recorder.start()
+        self.last_recording_path = None
+        return f"Recording started: {path.name}", None
+
+    def stop_recording(self) -> tuple[str, str | None]:
+        result = self.recorder.stop()
+        self.last_recording_path = result.output_path
+        message = (
+            f"Recording saved: {result.output_path.name} "
+            f"({result.frame_count} frames, {result.audio_sample_count} audio samples)"
+        )
+        return message, str(result.output_path)
 
     def _ensure_video_components(self) -> None:
         if self.tracker is None:
@@ -235,6 +264,8 @@ def create_demo(runtime: AirDJRuntime | None = None):
                 type="numpy",
                 label="AirDJ Live Camera",
                 value=_placeholder_frame("Click Start Camera"),
+                height=720,
+                width=405,
             )
 
         with gr.Row():
@@ -257,7 +288,10 @@ def create_demo(runtime: AirDJRuntime | None = None):
             capture_frame = gr.Button("Capture One Frame")
             start_audio = gr.Button("Start Audio")
             stop_audio = gr.Button("Stop Audio")
+            start_recording = gr.Button("Start Recording")
+            stop_recording = gr.Button("Stop Recording")
         message = gr.Textbox(label="Message", interactive=False)
+        recording_download = gr.File(label="Download Recording", interactive=False)
 
         frame_outputs = [
             camera_view,
@@ -297,13 +331,23 @@ def create_demo(runtime: AirDJRuntime | None = None):
         )
         start_audio.click(app.start_audio, outputs=message, queue=False)
         stop_audio.click(app.stop_audio, outputs=message, queue=False)
+        start_recording.click(
+            app.start_recording,
+            outputs=[message, recording_download],
+            queue=False,
+        )
+        stop_recording.click(
+            app.stop_recording,
+            outputs=[message, recording_download],
+            queue=False,
+        )
 
     return demo
 
 
 def _placeholder_frame(message: str = "AirDJ") -> np.ndarray:
     frame = np.zeros(
-        (DEFAULT_SETTINGS.frame_height, DEFAULT_SETTINGS.frame_width, 3),
+        (DEFAULT_SETTINGS.portrait_height, DEFAULT_SETTINGS.portrait_width, 3),
         dtype=np.uint8,
     )
     frame[:] = (24, 24, 32)
@@ -313,7 +357,7 @@ def _placeholder_frame(message: str = "AirDJ") -> np.ndarray:
         cv2.putText(
             frame,
             message,
-            (40, DEFAULT_SETTINGS.frame_height // 2),
+            (40, DEFAULT_SETTINGS.portrait_height // 2),
             cv2.FONT_HERSHEY_SIMPLEX,
             1.2,
             (255, 255, 255),

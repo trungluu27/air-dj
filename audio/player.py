@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+import numpy as np
 
 from audio.mixer import Mixer
 from config.settings import DEFAULT_SETTINGS
@@ -12,6 +15,7 @@ class AudioPlayer:
     sample_rate: int = DEFAULT_SETTINGS.sample_rate
     block_size: int = DEFAULT_SETTINGS.block_size
     channels: int = DEFAULT_SETTINGS.output_channels
+    audio_sinks: list[Callable[[np.ndarray], None]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._stream = None
@@ -55,4 +59,10 @@ class AudioPlayer:
             # Avoid logging from the real-time callback; UI/logging can surface
             # device issues during stream start instead.
             pass
-        outdata[:] = self.mixer.get_chunk(frames)
+        chunk = self.mixer.get_chunk(frames)
+        outdata[:] = chunk
+        for sink in list(self.audio_sinks):
+            try:
+                sink(chunk)
+            except Exception:
+                pass

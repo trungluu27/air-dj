@@ -11,6 +11,9 @@ class Settings:
     sample_rate: int = 44_100
     block_size: int = 512
     output_channels: int = 2
+    portrait_width: int = 720
+    portrait_height: int = 1280
+    recording_fps: int = 5
 
 
 WRIST = 0

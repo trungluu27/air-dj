@@ -11,6 +11,7 @@ This v1 focuses on the smallest set of gestures that matter for a strong demo:
 - Two-hand horizontal midpoint controls the crossfader.
 
 Effects, BPM control, scratch, and track switching are intentionally left for later phases.
+The camera view is rendered in a vertical 9:16 TikTok-style frame with a cyberpunk HUD.
 
 ## Setup
 
@@ -37,7 +38,7 @@ http://127.0.0.1:7860
 ## Demo Flow
 
 1. Allow browser webcam access.
-2. Click `Start Camera` to show the annotated webcam stream in `AirDJ Live Camera`.
+2. Click `Start Camera` to show the annotated 9:16 webcam stream in `AirDJ Live Camera`.
 3. Upload a `.wav` or `.mp3` file for Deck A and Deck B.
 4. Click `Load Track A` and `Load Track B`.
 5. Click `Start Audio`. This opens the audio output stream; it does not start a paused deck by itself.
@@ -47,6 +48,7 @@ http://127.0.0.1:7860
    - Open palm: play.
    - Closed fist: pause.
    - Move both hands left/right together: crossfader.
+7. Click `Start Recording` / `Stop Recording` to save a vertical MP4. If audio is playing, the mixed output is merged into the recording.
 
 ## Project Structure
 
@@ -69,6 +71,9 @@ gestures/
 ui/
     gradio_app.py
     overlay.py
+        portrait.py
+    recording/
+        recorder.py
 assets/tracks/
 tests/
 ```
@@ -77,4 +82,5 @@ tests/
 
 - Audio playback runs on the local machine via SoundDevice.
 - Webcam frames are captured locally with OpenCV and displayed as an annotated Gradio stream.
+- Recordings are written to `assets/recordings/` and exposed in the `Download Recording` control.
 - MediaPipe may report mirrored hand labels depending on browser/camera behavior. If Deck A/B feel swapped, switch camera mirroring in the browser or swap hands for the demo.

@@ -4,3 +4,4 @@ opencv-contrib-python==4.11.0.86
 numpy==1.26.4
 sounddevice>=0.4
 soundfile>=0.12
+imageio-ffmpeg>=0.5

@@ -24,80 +24,171 @@ class Overlay:
         status: str = "Ready",
     ) -> Any:
         output = frame.copy()
+        hands_list = list(hands)
+        self._draw_vignette(output)
         self._draw_header(output, status)
-        self._draw_deck(output, "Deck A", session.volume_a, session.playing_a, 24, 72)
-        self._draw_deck(output, "Deck B", session.volume_b, session.playing_b, 24, 152)
-        self._draw_crossfader(output, session.crossfader, 24, 236)
-        self._draw_hands(output, hands, 24, 306)
+        self._draw_vertical_deck(output, "DECK A", session.volume_a, session.playing_a, 24)
+        self._draw_vertical_deck(
+            output,
+            "DECK B",
+            session.volume_b,
+            session.playing_b,
+            output.shape[1] - 82,
+        )
+        self._draw_crossfader(output, session.crossfader)
+        self._draw_hands(output, hands_list)
         return output
 
+    def _draw_vignette(self, frame: Any) -> None:
+        overlay = frame.copy()
+        height, width = frame.shape[:2]
+        self._cv2.rectangle(overlay, (0, 0), (width, 120), (16, 8, 32), -1)
+        self._cv2.rectangle(overlay, (0, height - 190), (width, height), (16, 8, 32), -1)
+        self._cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+
     def _draw_header(self, frame: Any, status: str) -> None:
+        width = frame.shape[1]
         self._cv2.putText(
             frame,
-            f"AirDJ - {status}",
-            (24, 36),
-            self._cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
+            "AIRDJ",
+            (28, 58),
+            self._cv2.FONT_HERSHEY_DUPLEX,
+            1.45,
             (0, 255, 255),
             2,
             self._cv2.LINE_AA,
         )
-
-    def _draw_deck(
-        self, frame: Any, name: str, volume: float, playing: bool, x: int, y: int
-    ) -> None:
-        state = "PLAYING" if playing else "PAUSED"
         self._cv2.putText(
             frame,
-            f"{name}: {state}",
-            (x, y),
+            "GESTURE MIX MODE",
+            (32, 88),
             self._cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 255),
-            2,
+            0.48,
+            (255, 0, 210),
+            1,
             self._cv2.LINE_AA,
         )
-        self._draw_bar(frame, x, y + 18, 220, 18, volume)
         self._cv2.putText(
             frame,
-            f"vol {int(volume * 100):3d}%",
-            (x + 235, y + 34),
+            status.upper(),
+            (width - 190, 58),
             self._cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
-            (200, 255, 200),
+            (180, 255, 255),
             1,
             self._cv2.LINE_AA,
         )
 
-    def _draw_crossfader(self, frame: Any, value: float, x: int, y: int) -> None:
+    def _draw_vertical_deck(
+        self, frame: Any, name: str, volume: float, playing: bool, x: int
+    ) -> None:
+        height = frame.shape[0]
+        meter_top = 190
+        meter_height = height - 430
+        meter_width = 42
+        state = "PLAYING" if playing else "PAUSED"
+        color = (0, 255, 255) if playing else (255, 0, 210)
+
+        self._cv2.rectangle(
+            frame,
+            (x, meter_top),
+            (x + meter_width, meter_top + meter_height),
+            (70, 40, 92),
+            2,
+        )
+        fill_height = int(meter_height * max(0.0, min(1.0, volume)))
+        y1 = meter_top + meter_height - fill_height
+        self._cv2.rectangle(
+            frame,
+            (x + 6, y1),
+            (x + meter_width - 6, meter_top + meter_height - 6),
+            color,
+            -1,
+        )
+        self._cv2.rectangle(
+            frame,
+            (x + 6, y1),
+            (x + meter_width - 6, meter_top + meter_height - 6),
+            (255, 255, 255),
+            1,
+        )
         self._cv2.putText(
             frame,
-            "Crossfader",
-            (x, y),
+            name,
+            (x - 4, meter_top - 24),
             self._cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 255),
-            2,
+            0.55,
+            color,
+            1,
             self._cv2.LINE_AA,
         )
-        self._draw_bar(frame, x, y + 18, 300, 16, value)
+        self._cv2.putText(
+            frame,
+            f"{int(volume * 100):02d}%",
+            (x - 2, meter_top + meter_height + 32),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.58,
+            (255, 255, 255),
+            1,
+            self._cv2.LINE_AA,
+        )
+        self._draw_badge(frame, state, x - 6, meter_top + meter_height + 48, color)
+
+    def _draw_crossfader(self, frame: Any, value: float) -> None:
+        height, width = frame.shape[:2]
+        x = 120
+        y = height - 130
+        bar_width = width - 240
+        value = max(0.0, min(1.0, value))
+        self._cv2.putText(
+            frame,
+            "CROSSFADER",
+            (x, y),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (180, 255, 255),
+            1,
+            self._cv2.LINE_AA,
+        )
+        self._cv2.line(frame, (x, y + 36), (x + bar_width, y + 36), (70, 40, 92), 10)
+        knob_x = x + int(bar_width * value)
+        self._cv2.circle(frame, (knob_x, y + 36), 17, (255, 0, 210), -1)
+        self._cv2.circle(frame, (knob_x, y + 36), 23, (0, 255, 255), 2)
 
     def _draw_hands(
-        self, frame: Any, hands: Iterable[HandFeatures], x: int, y: int
+        self, frame: Any, hands: Iterable[HandFeatures]
     ) -> None:
+        x = 28
+        y = 120
         offset = 0
         for hand in hands:
+            color = (0, 255, 255) if hand.label == "Left" else (255, 0, 210)
             self._cv2.putText(
                 frame,
-                f"{hand.label}: fingers={hand.finger_count} wrist=({hand.wrist_x:.2f}, {hand.wrist_y:.2f})",
+                f"{hand.label.upper()}  FINGERS:{hand.finger_count}  X:{hand.wrist_x:.2f} Y:{hand.wrist_y:.2f}",
                 (x, y + offset),
                 self._cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (220, 220, 220),
+                0.48,
+                color,
                 1,
                 self._cv2.LINE_AA,
             )
             offset += 24
+
+    def _draw_badge(self, frame: Any, text: str, x: int, y: int, color: tuple[int, int, int]) -> None:
+        text_width = max(82, len(text) * 10)
+        self._cv2.rectangle(frame, (x, y), (x + text_width, y + 24), (16, 8, 32), -1)
+        self._cv2.rectangle(frame, (x, y), (x + text_width, y + 24), color, 1)
+        self._cv2.putText(
+            frame,
+            text,
+            (x + 8, y + 17),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            color,
+            1,
+            self._cv2.LINE_AA,
+        )
 
     def _draw_bar(
         self, frame: Any, x: int, y: int, width: int, height: int, value: float
