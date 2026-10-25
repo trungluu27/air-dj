@@ -6,18 +6,43 @@ from typing import Iterable
 
 from config.settings import DEFAULT_SETTINGS
 from core.session import DJSession
-from gestures.gesture_classifier import GestureClassifier, GestureType
 from gestures.gesture_detector import HandFeatures
+from gestures.pinch import PinchDetector, PinchEvent, PinchState
+
+# The middle of the frame is filter-off; a hand has to travel a little way out of
+# it before the sweep engages, so a hold that is only meant to cancel a transition
+# does not also open the filter.
+FILTER_DEADZONE = 0.08
 
 
 @dataclass
 class GestureMapper:
-    smoothing_alpha: float = DEFAULT_SETTINGS.smoothing_alpha
-    play_pause_cooldown_seconds: float = DEFAULT_SETTINGS.play_pause_cooldown_seconds
-    classifier: GestureClassifier = field(default_factory=GestureClassifier)
-    _last_play_pause_at: dict[str, float] = field(
-        default_factory=lambda: {"Left": -999.0, "Right": -999.0}
-    )
+    """Maps one gesture - a pinch - onto the mixer.
+
+    Everything else was removed on purpose. Volume followed hand height, which
+    meant a hand could never rest; the crossfader needed both hands in frame at
+    once; and play, pause, tempo sync and beat match were all read off a finger
+    count that flipped whenever a hand tilted. Four meanings on one noisy signal
+    is what made the old mapping so hard to control.
+
+    What is left:
+
+    * pinch tap    - ask for the next automatic transition
+    * pinch hold, hand moved up or down - sweep the master filter. Moving away
+                     from the centre is what marks this as a sweep rather than a
+                     mix, and only then is the transition request withdrawn.
+                     Holding still is harmless, so an ordinary slow pinch still
+                     mixes.
+    * hand leaves  - the filter returns to centre on its own
+
+    The mapper never touches audio timing. It only raises a request; the
+    transition engine decides when that becomes audible.
+    """
+
+    smoothing_alpha: float = DEFAULT_SETTINGS.filter_smoothing_alpha
+    detector: PinchDetector = field(default_factory=PinchDetector)
+    _seen_labels: set[str] = field(default_factory=set)
+    _sweeping: bool = False
 
     def apply(
         self,
@@ -28,45 +53,75 @@ class GestureMapper:
         current_time = time.monotonic() if now is None else now
         by_label = {hand.label: hand for hand in hands}
 
-        left = by_label.get("Left")
-        right = by_label.get("Right")
+        for label in self._seen_labels - set(by_label):
+            self.detector.release(label)
+        self._seen_labels = set(by_label)
 
-        if left is not None:
-            session.volume_a = self._smooth(session.volume_a, 1.0 - left.wrist_y)
-            self._apply_play_pause(session, left, current_time)
+        hand = self._primary_hand(by_label)
+        if hand is None:
+            # No hand to hold the filter open, so let it fall back to centre.
+            self._sweeping = False
+            session.pinch_state = "no hand"
+            session.filter_master = self._smooth(session.filter_master, 0.0)
+            return session
 
-        if right is not None:
-            session.volume_b = self._smooth(session.volume_b, 1.0 - right.wrist_y)
-            self._apply_play_pause(session, right, current_time)
+        event = self.detector.update(hand, current_time)
+        session.pinch_ratio = event.ratio
 
-        if left is not None and right is not None:
-            midpoint = (left.wrist_x + right.wrist_x) / 2.0
-            session.crossfader = self._smooth(session.crossfader, midpoint)
+        if event.closed_edge:
+            session.automix_requested = True
+            self._sweeping = False
+        if event.state is PinchState.OPEN:
+            self._sweeping = False
 
+        target = self._filter_target(event)
+        if target != 0.0 and not self._sweeping:
+            # The hand has been held pinched *and* moved away from the centre, so
+            # this is a filter sweep rather than a mix. Only now is the transition
+            # request withdrawn - the engine is still waiting for a downbeat, so
+            # nothing has been heard yet.
+            #
+            # Holding still used to be enough to cancel, which made an ordinary
+            # pinch lasting longer than a third of a second do nothing at all, with
+            # no feedback to say why.
+            self._sweeping = True
+            session.automix_requested = False
+            session.automix_cancel_requested = True
+
+        session.filter_master = self._smooth(session.filter_master, target)
+        # Labelled last, so the readout reflects the sweep decision taken just
+        # above rather than trailing it by a frame.
+        session.pinch_state = self._pinch_label(event)
         return session
 
-    def _apply_play_pause(
-        self, session: DJSession, hand: HandFeatures, now: float
-    ) -> None:
-        gesture = self.classifier.classify(hand.finger_count)
-        if gesture is GestureType.UNKNOWN:
-            return
+    def _pinch_label(self, event: PinchEvent) -> str:
+        if event.state is PinchState.OPEN:
+            return "open"
+        if self._sweeping:
+            return "sweeping"
+        return "hold" if event.holding else "pinched"
 
-        if now - self._last_play_pause_at[hand.label] < self.play_pause_cooldown_seconds:
-            return
+    def _primary_hand(self, by_label: dict[str, HandFeatures]) -> HandFeatures | None:
+        """Whichever hand is driving. Right wins when both are up, but one hand on
+        its own always works - never needing a second hand in frame is half the
+        point of the redesign."""
+        for label in ("Right", "Left"):
+            if label in by_label:
+                return by_label[label]
+        return next(iter(by_label.values()), None)
 
-        if hand.label == "Left":
-            session.playing_a = gesture is GestureType.OPEN_PALM
-            session.last_gesture_a = gesture
-        elif hand.label == "Right":
-            session.playing_b = gesture is GestureType.OPEN_PALM
-            session.last_gesture_b = gesture
-        else:
-            return
-
-        self._last_play_pause_at[hand.label] = now
+    def _filter_target(self, event: PinchEvent) -> float:
+        if not event.holding:
+            return 0.0
+        # wrist_y is 0 at the top of the frame: raising the hand opens a high-pass
+        # and thins the track out, lowering it closes a low-pass and muffles it.
+        offset = 0.5 - event.hold_y
+        if abs(offset) < FILTER_DEADZONE:
+            return 0.0
+        span = max(1e-6, 0.5 - FILTER_DEADZONE)
+        sign = 1.0 if offset > 0.0 else -1.0
+        return sign * min(1.0, (abs(offset) - FILTER_DEADZONE) / span)
 
     def _smooth(self, previous: float, new_value: float) -> float:
         alpha = max(0.0, min(1.0, self.smoothing_alpha))
-        smoothed = alpha * max(0.0, min(1.0, new_value)) + (1.0 - alpha) * previous
-        return max(0.0, min(1.0, smoothed))
+        return max(-1.0, min(1.0, alpha * new_value + (1.0 - alpha) * previous))

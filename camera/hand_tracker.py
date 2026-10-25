@@ -91,6 +91,11 @@ class HandTracker:
         results = self._hands.process(rgb_frame)
         annotated = rgb_frame.copy()
         tracked: list[TrackedHand] = []
+        height, width = rgb_frame.shape[:2]
+        # MediaPipe normalises x against the frame width and y against its height,
+        # so the detector needs the frame's shape to compare distances in the two
+        # directions. Without it the pinch threshold would shift with hand rotation.
+        aspect_ratio = width / height if height else 1.0
 
         if not results.multi_hand_landmarks:
             return HandResult(hands=tracked, annotated_frame=annotated)
@@ -105,7 +110,7 @@ class HandTracker:
                 TrackedHand(
                     label=label,
                     landmarks=landmarks,
-                    features=self._detector.extract(label, landmarks),
+                    features=self._detector.extract(label, landmarks, aspect_ratio),
                 )
             )
 

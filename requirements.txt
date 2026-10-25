@@ -5,3 +5,5 @@ numpy==1.26.4
 sounddevice>=0.4
 soundfile>=0.12
 imageio-ffmpeg>=0.5
+librosa>=0.11
+scipy>=1.11

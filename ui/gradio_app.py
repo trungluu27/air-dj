@@ -19,7 +19,13 @@ from ui.overlay import Overlay
 from ui.portrait import to_portrait_frame
 
 logger = logging.getLogger(__name__)
-CAMERA_REFRESH_SECONDS = 0.2
+
+# frame, session json, automix line, transition progress, crossfader, filter,
+# deck A line, deck B line
+FrameOutputs = tuple[Any, dict[str, object], str, float, float, float, str, str]
+# A pinch can be over in a fifth of a second, so the loop has to sample faster than
+# the old 0.2s or a quick tap would fall between two frames entirely.
+CAMERA_REFRESH_SECONDS = 0.1
 
 
 @dataclass
@@ -59,7 +65,7 @@ class AirDJRuntime:
         self.camera_capture = None
         return "Camera stopped"
 
-    def process_camera_frame(self) -> tuple[Any, dict[str, object], float, float, float, str, str]:
+    def process_camera_frame(self) -> FrameOutputs:
         if self.camera_capture is None:
             return self._frame_response(
                 _placeholder_frame("Click Start Camera"),
@@ -89,7 +95,7 @@ class AirDJRuntime:
         )
         return self.process_frame(rgb_frame)
 
-    def process_frame(self, frame: Any) -> tuple[Any, dict[str, object], float, float, float, str, str]:
+    def process_frame(self, frame: Any) -> FrameOutputs:
         if frame is None:
             return self._frame_response(
                 _placeholder_frame("Waiting for frame"),
@@ -109,17 +115,11 @@ class AirDJRuntime:
                 self.session,
                 features,
                 status=f"{len(features)} hand(s)",
+                deck_a=self.mixer.deck_a,
+                deck_b=self.mixer.deck_b,
             )
             self.recorder.write_frame(annotated)
-            return (
-                annotated,
-                self.session.as_dict(),
-                self.session.volume_a,
-                self.session.volume_b,
-                self.session.crossfader,
-                self._deck_state("A"),
-                self._deck_state("B"),
-            )
+            return self._outputs(annotated, self.session.as_dict())
         except Exception as exc:  # Gradio callbacks should not crash the app.
             logger.exception("Frame processing failed")
             return self._frame_response(frame, {"error": str(exc)})
@@ -138,6 +138,11 @@ class AirDJRuntime:
             return self._message_with_decks(
                 f"Deck {deck_name}: failed to load {path.name}: {exc}"
             )
+
+    def set_transition_beats(self, beats: float) -> str:
+        length = max(4, int(round(beats / 4.0)) * 4)
+        self.session.automix_beats = length
+        return f"Transitions will run for {length} beats ({length // 4} bars)."
 
     def start_audio(self) -> str:
         try:
@@ -197,22 +202,43 @@ class AirDJRuntime:
         self,
         frame: Any,
         status_update: dict[str, object],
-    ) -> tuple[Any, dict[str, object], float, float, float, str, str]:
+    ) -> FrameOutputs:
+        return self._outputs(frame, self.session.as_dict() | status_update)
+
+    def _outputs(self, frame: Any, status: dict[str, object]) -> FrameOutputs:
+        """Build the tuple the Gradio timer expects.
+
+        Both the happy path and the error path return it, so the shape is declared
+        once here rather than being kept in step by hand.
+        """
         return (
             frame,
-            self.session.as_dict() | status_update,
-            self.session.volume_a,
-            self.session.volume_b,
+            status,
+            self._transition_line(),
+            self.session.transition_progress,
             self.session.crossfader,
+            self.session.filter_master,
             self._deck_state("A"),
             self._deck_state("B"),
         )
+
+    def _transition_line(self) -> str:
+        session = self.session
+        if session.transition_phase == "armed":
+            return f"Cueing {session.transition_label} - waiting for the downbeat"
+        if session.transition_phase == "running":
+            return (
+                f"Mixing {session.transition_label} - "
+                f"{session.transition_beats_remaining:.0f} beats left"
+            )
+        return session.transition_status
 
     def _deck_state(self, deck_name: str) -> str:
         deck = self.mixer.deck_a if deck_name == "A" else self.mixer.deck_b
         assert deck is not None
         state = "PLAYING" if deck.playing else "PAUSED"
-        return f"Deck {deck_name}: {state} - {deck.track_name}"
+        bpm = f"{deck.effective_bpm:.0f} BPM" if deck.effective_bpm else "-- BPM"
+        return f"Deck {deck_name}: {state} - {deck.track_name} - {bpm} - tempo {deck.tempo_ratio:.2f}x"
 
     def _message_with_decks(self, message: str) -> tuple[str, str, str]:
         return message, self._deck_state("A"), self._deck_state("B")
@@ -252,9 +278,17 @@ def create_demo(runtime: AirDJRuntime | None = None):
     with gr.Blocks(title="AirDJ - Gesture Controlled DJ Mixer") as demo:
         gr.Markdown(
             "# AirDJ - Gesture Controlled DJ Mixer\n"
-            "Use webcam gestures: left hand height controls Deck A volume, "
-            "right hand height controls Deck B volume, open palm plays, fist pauses, "
-            "and two-hand horizontal midpoint controls the crossfader."
+            "**One gesture does everything.** Pinch your thumb and index finger "
+            "together:\n\n"
+            "* **Pinch and let go** - AirDJ mixes the two tracks for you. It waits "
+            "for the next downbeat, matches the tempos, cues the incoming track at "
+            "the start of a phrase, swaps the bass over halfway through and rides "
+            "the fader across 16 beats. The very first pinch just starts Deck A.\n"
+            "* **Pinch and hold, then move your hand up or down** - sweeps a filter. "
+            "Up thins the track out, down muffles it. Let go and it returns on its "
+            "own. Holding also calls off the transition the pinch asked for, so a "
+            "hold never mixes by accident.\n\n"
+            "Load a track onto each deck, start the audio and the camera, then pinch."
         )
 
         timer = gr.Timer(CAMERA_REFRESH_SECONDS)
@@ -273,9 +307,27 @@ def create_demo(runtime: AirDJRuntime | None = None):
             with gr.Column():
                 deck_a_status = gr.Textbox(label="Deck A", interactive=False)
                 deck_b_status = gr.Textbox(label="Deck B", interactive=False)
-                volume_a = gr.Slider(0, 1, value=app.session.volume_a, label="Volume A", interactive=False)
-                volume_b = gr.Slider(0, 1, value=app.session.volume_b, label="Volume B", interactive=False)
-                crossfader = gr.Slider(0, 1, value=app.session.crossfader, label="Crossfader", interactive=False)
+                transition_status = gr.Textbox(label="Automix", interactive=False)
+                transition_progress = gr.Slider(
+                    0, 1, value=0.0, label="Transition progress", interactive=False
+                )
+                crossfader = gr.Slider(
+                    0, 1, value=app.session.crossfader, label="Crossfader", interactive=False
+                )
+                filter_master = gr.Slider(
+                    -1,
+                    1,
+                    value=0.0,
+                    label="Filter - hold a pinch and move your hand",
+                    interactive=False,
+                )
+                transition_beats = gr.Slider(
+                    4,
+                    32,
+                    value=app.session.automix_beats,
+                    step=4,
+                    label="Transition length (beats)",
+                )
 
         with gr.Row():
             track_a = gr.File(label="Upload Track A", file_types=[".wav", ".mp3"])
@@ -296,9 +348,10 @@ def create_demo(runtime: AirDJRuntime | None = None):
         frame_outputs = [
             camera_view,
             status,
-            volume_a,
-            volume_b,
+            transition_status,
+            transition_progress,
             crossfader,
+            filter_master,
             deck_a_status,
             deck_b_status,
         ]
@@ -321,6 +374,12 @@ def create_demo(runtime: AirDJRuntime | None = None):
             app.load_track,
             inputs=[deck_b_name, track_b],
             outputs=[message, deck_a_status, deck_b_status],
+        )
+        transition_beats.change(
+            app.set_transition_beats,
+            inputs=transition_beats,
+            outputs=message,
+            queue=False,
         )
         start_camera.click(app.start_camera, outputs=message, queue=False)
         stop_camera.click(app.stop_camera, outputs=message, queue=False)
