@@ -115,29 +115,97 @@ class GestureMapperTests(unittest.TestCase):
         self.assertEqual(self.session.filter_master, 0.0)
 
     def test_a_hand_leaving_the_frame_returns_the_filter_to_centre(self) -> None:
-        """Nothing may stay latched on when tracking is lost - being unable to let
-        go of a control is what made the old mapping tiring to use."""
+        """Nothing may stay latched on once the hand is really gone - being unable
+        to let go of a control is what made the old mapping tiring to use.
+
+        The release waits out the dropped-frame grace first; see
+        test_a_dropped_frame_does_not_release_the_hand for the other half.
+        """
         self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.5)], now=10.0)
         self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.0)], now=10.6)
 
-        self.mapper.apply(self.session, [], now=10.8)
+        self.mapper.apply(self.session, [], now=11.4)
 
         self.assertEqual(self.session.filter_master, 0.0)
+        self.assertEqual(self.session.active_hand, "")
 
     def test_one_hand_alone_is_enough(self) -> None:
         """The old crossfader needed both wrists in frame at once."""
         self.mapper.apply(self.session, [hand(CLOSED, label="Left")], now=10.0)
 
         self.assertTrue(self.session.automix_requested)
+        self.assertEqual(self.session.active_hand, "Left")
 
-    def test_the_right_hand_leads_when_both_are_up(self) -> None:
+    def test_the_right_hand_leads_when_both_arrive_together(self) -> None:
         self.mapper.apply(
             self.session,
             [hand(OPEN, label="Right"), hand(CLOSED, label="Left")],
             now=10.0,
         )
 
+        self.assertEqual(self.session.active_hand, "Right")
         self.assertFalse(self.session.automix_requested)
+
+    def test_a_second_hand_cannot_take_over_from_the_first(self) -> None:
+        """Control stays where the user put it.
+
+        The right hand used to win every frame, so a second hand drifting into
+        view seized control mid-gesture.
+        """
+        self.mapper.apply(self.session, [hand(OPEN, label="Left")], now=10.0)
+        self.assertEqual(self.session.active_hand, "Left")
+
+        # The right hand appears, pinching. It must be ignored entirely.
+        self.mapper.apply(
+            self.session,
+            [hand(OPEN, label="Left"), hand(CLOSED, label="Right")],
+            now=10.2,
+        )
+
+        self.assertEqual(self.session.active_hand, "Left")
+        self.assertFalse(self.session.automix_requested)
+
+    def test_the_locked_hand_still_drives_while_a_second_is_in_frame(self) -> None:
+        self.mapper.apply(self.session, [hand(OPEN, label="Left")], now=10.0)
+
+        self.mapper.apply(
+            self.session,
+            [hand(CLOSED, label="Left"), hand(OPEN, label="Right")],
+            now=10.2,
+        )
+
+        self.assertTrue(self.session.automix_requested)
+        self.assertEqual(self.session.active_hand, "Left")
+
+    def test_a_dropped_frame_does_not_release_the_hand(self) -> None:
+        """MediaPipe loses a hand for a frame now and then; letting go of the
+        filter over a blink would make a sweep stutter."""
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.5)], now=10.0)
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.0)], now=10.6)
+        swept = self.session.filter_master
+        self.assertAlmostEqual(swept, 1.0)
+
+        self.mapper.apply(self.session, [], now=10.7)
+
+        self.assertEqual(self.session.filter_master, swept)
+        self.assertEqual(self.session.active_hand, "Right")
+
+    def test_control_is_released_once_the_hand_is_really_gone(self) -> None:
+        self.mapper.apply(self.session, [hand(CLOSED, label="Left")], now=10.0)
+
+        self.mapper.apply(self.session, [], now=11.0)
+
+        self.assertEqual(self.session.active_hand, "")
+        self.assertEqual(self.session.pinch_state, "no hand")
+
+    def test_the_other_hand_can_take_over_after_the_first_leaves(self) -> None:
+        self.mapper.apply(self.session, [hand(OPEN, label="Left")], now=10.0)
+        self.mapper.apply(self.session, [], now=11.0)
+
+        self.mapper.apply(self.session, [hand(CLOSED, label="Right")], now=11.1)
+
+        self.assertEqual(self.session.active_hand, "Right")
+        self.assertTrue(self.session.automix_requested)
 
     def test_hand_height_no_longer_moves_the_volumes(self) -> None:
         self.mapper.apply(

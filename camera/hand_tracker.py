@@ -64,10 +64,18 @@ class HandResult:
 class HandTracker:
     def __init__(
         self,
-        max_num_hands: int = 2,
+        max_num_hands: int = 1,
         min_detection_confidence: float = 0.6,
         min_tracking_confidence: float = 0.5,
     ) -> None:
+        """One hand by default.
+
+        The whole control scheme is one-handed, and asking MediaPipe for a second
+        hand only costs frame time and gives the overlay a second set of landmarks
+        to confuse the eye. The mapper locks onto one hand regardless; this just
+        stops the work being done at all. Raise it if a two-handed gesture is ever
+        added.
+        """
         try:
             import cv2
             import mediapipe as mp

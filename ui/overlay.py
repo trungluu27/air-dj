@@ -217,6 +217,19 @@ class Overlay:
             1,
             self._cv2.LINE_AA,
         )
+        if session.active_hand:
+            # Which hand holds control. It stays with the first hand seen, so this
+            # says plainly why a second hand in frame is doing nothing.
+            self._cv2.putText(
+                frame,
+                f"{session.active_hand.upper()} HAND",
+                (x - 46, y + bar_height + 42),
+                self._cv2.FONT_HERSHEY_SIMPLEX,
+                0.38,
+                (180, 255, 255),
+                1,
+                self._cv2.LINE_AA,
+            )
 
     def _draw_filter(self, frame: Any, value: float) -> None:
         if abs(value) < 0.02:

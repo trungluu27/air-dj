@@ -22,6 +22,10 @@ class Settings:
     # Higher than smoothing_alpha because the audio side slews the filter knob
     # per block; smoothing slowly in both places makes a sweep lag the hand.
     filter_smoothing_alpha: float = 0.5
+    # How long a locked hand may go missing before control is released. Long
+    # enough to ride out a dropped frame, short enough that swapping hands
+    # deliberately does not feel stuck.
+    hand_release_seconds: float = 0.5
 
 
 WRIST = 0

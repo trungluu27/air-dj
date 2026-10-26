@@ -31,6 +31,7 @@ class DJSession:
     filter_master: float = 0.0
     pinch_state: str = "no hand"
     pinch_ratio: float = 1.0
+    active_hand: str = ""
     effects: set[str] = field(default_factory=set)
     last_gesture_a: GestureType = GestureType.UNKNOWN
     last_gesture_b: GestureType = GestureType.UNKNOWN
@@ -58,6 +59,7 @@ class DJSession:
             "filter_master": round(self.filter_master, 3),
             "pinch_state": self.pinch_state,
             "pinch_ratio": round(self.pinch_ratio, 3),
+            "active_hand": self.active_hand,
             "effects": sorted(self.effects),
             "last_gesture_a": self.last_gesture_a.value,
             "last_gesture_b": self.last_gesture_b.value,

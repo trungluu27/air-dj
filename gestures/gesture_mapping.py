@@ -35,14 +35,19 @@ class GestureMapper:
                      mixes.
     * hand leaves  - the filter returns to centre on its own
 
+    Only ever one hand at a time: the first one seen is locked and keeps
+    control until it leaves the frame.
+
     The mapper never touches audio timing. It only raises a request; the
     transition engine decides when that becomes audible.
     """
 
     smoothing_alpha: float = DEFAULT_SETTINGS.filter_smoothing_alpha
+    hand_release_seconds: float = DEFAULT_SETTINGS.hand_release_seconds
     detector: PinchDetector = field(default_factory=PinchDetector)
-    _seen_labels: set[str] = field(default_factory=set)
     _sweeping: bool = False
+    _locked_label: str | None = None
+    _locked_seen_at: float = 0.0
 
     def apply(
         self,
@@ -53,13 +58,14 @@ class GestureMapper:
         current_time = time.monotonic() if now is None else now
         by_label = {hand.label: hand for hand in hands}
 
-        for label in self._seen_labels - set(by_label):
-            self.detector.release(label)
-        self._seen_labels = set(by_label)
-
-        hand = self._primary_hand(by_label)
+        hand, lock_held = self._locked_hand(by_label, current_time)
+        session.active_hand = self._locked_label or ""
         if hand is None:
-            # No hand to hold the filter open, so let it fall back to centre.
+            if lock_held:
+                # Tracking dropped the hand for a frame or two. Freeze rather than
+                # letting go of a filter sweep over a blink.
+                return session
+            # Nothing to hold the filter open, so let it fall back to centre.
             self._sweeping = False
             session.pinch_state = "no hand"
             session.filter_master = self._smooth(session.filter_master, 0.0)
@@ -101,14 +107,48 @@ class GestureMapper:
             return "sweeping"
         return "hold" if event.holding else "pinched"
 
-    def _primary_hand(self, by_label: dict[str, HandFeatures]) -> HandFeatures | None:
-        """Whichever hand is driving. Right wins when both are up, but one hand on
-        its own always works - never needing a second hand in frame is half the
-        point of the redesign."""
+    def _locked_hand(
+        self, by_label: dict[str, HandFeatures], now: float
+    ) -> tuple[HandFeatures | None, bool]:
+        """Follow one hand and ignore every other.
+
+        Control used to go to whichever hand the right-hand-wins rule picked each
+        frame, so a second hand drifting into view took over mid-gesture. Now the
+        first hand to arrive is locked and keeps control until it leaves; anything
+        else in frame is not looked at.
+
+        Returns the hand to read and whether a lock is still being held. A held
+        lock with no hand means tracking blinked, and the caller should freeze
+        rather than reset.
+        """
+        if self._locked_label is not None:
+            hand = by_label.get(self._locked_label)
+            if hand is not None:
+                self._locked_seen_at = now
+                return hand, True
+            if now - self._locked_seen_at < self.hand_release_seconds:
+                return None, True
+            self._release_lock()
+
+        if not by_label:
+            return None, False
+
+        # Nothing locked yet. If both hands arrive on the same frame the right one
+        # takes it, otherwise there is only one to choose.
         for label in ("Right", "Left"):
             if label in by_label:
-                return by_label[label]
-        return next(iter(by_label.values()), None)
+                self._locked_label = label
+                break
+        else:
+            self._locked_label = next(iter(by_label))
+        self._locked_seen_at = now
+        return by_label[self._locked_label], True
+
+    def _release_lock(self) -> None:
+        if self._locked_label is not None:
+            self.detector.release(self._locked_label)
+        self._locked_label = None
+        self._sweeping = False
 
     def _filter_target(self, event: PinchEvent) -> float:
         if not event.holding:
