@@ -9,6 +9,18 @@ if TYPE_CHECKING:
     from audio.deck import Deck
 
 
+# The dark strip along the bottom holding the filter, crossfader and transition
+# readouts. Everything above is camera, so the layout is anchored to it.
+BOTTOM_PANEL_HEIGHT = 190
+WAVEFORM_PANEL_HEIGHT = 250
+# Gap between the waveform panel and that strip. The panel sits as low as it
+# can: the middle of the frame is where the hands are, and the less of it the
+# HUD covers the easier the gesture is to aim.
+WAVEFORM_PANEL_GAP = 12
+# Gutter down the left of each lane holding the deck name, BPM and tempo.
+LANE_LABEL_WIDTH = 104
+
+
 def _waveform_viewport(progress: float, visible_fraction: float = 0.18) -> tuple[float, float]:
     visible_fraction = max(0.05, min(1.0, visible_fraction))
     progress = max(0.0, min(1.0, progress))
@@ -65,7 +77,17 @@ class Overlay:
             session.playing_b,
             output.shape[1] - 82,
         )
-        self._draw_beatmatch_display(output, deck_a, deck_b, 96, 690, output.shape[1] - 192)
+        self._draw_beatmatch_display(
+            output,
+            deck_a,
+            deck_b,
+            96,
+            output.shape[0]
+            - BOTTOM_PANEL_HEIGHT
+            - WAVEFORM_PANEL_HEIGHT
+            - WAVEFORM_PANEL_GAP,
+            output.shape[1] - 192,
+        )
         self._draw_crossfader(output, session.crossfader)
         self._draw_transition(output, session)
         self._draw_pinch_meter(output, session)
@@ -222,7 +244,9 @@ class Overlay:
         overlay = frame.copy()
         height, width = frame.shape[:2]
         self._cv2.rectangle(overlay, (0, 0), (width, 120), (16, 8, 32), -1)
-        self._cv2.rectangle(overlay, (0, height - 190), (width, height), (16, 8, 32), -1)
+        self._cv2.rectangle(
+            overlay, (0, height - BOTTOM_PANEL_HEIGHT), (width, height), (16, 8, 32), -1
+        )
         self._cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
 
     def _draw_header(self, frame: Any, status: str) -> None:
@@ -363,7 +387,7 @@ class Overlay:
         y: int,
         width: int,
     ) -> None:
-        panel_height = 250
+        panel_height = WAVEFORM_PANEL_HEIGHT
         self._cv2.rectangle(frame, (x, y), (x + width, y + panel_height), (10, 14, 24), -1)
         self._cv2.rectangle(frame, (x, y), (x + width, y + panel_height), (70, 210, 220), 1)
         self._cv2.putText(
@@ -377,8 +401,8 @@ class Overlay:
             self._cv2.LINE_AA,
         )
 
-        graph_x = x + 80
-        graph_width = width - 104
+        graph_x = x + LANE_LABEL_WIDTH
+        graph_width = width - LANE_LABEL_WIDTH - 24
         lane_a_y = y + 74
         lane_b_y = y + 164
         lane_height = 62
@@ -442,10 +466,14 @@ class Overlay:
             beat_offsets = _visible_beat_offsets(deck.beat_positions, viewport_start, viewport_end)
             progress_offset = (deck.progress - viewport_start) / max(0.001, viewport_end - viewport_start)
 
+        # Stacked rather than on one line: "136 BPM +0.0%" was wider than the
+        # gutter and ran underneath the waveform, hiding the one number you need
+        # to check before loading two tracks.
+        label_x = x - LANE_LABEL_WIDTH + 12
         self._cv2.putText(
             frame,
             f"DECK {label}",
-            (x - 70, y + 24),
+            (label_x, y + 20),
             self._cv2.FONT_HERSHEY_SIMPLEX,
             0.52,
             color,
@@ -454,11 +482,21 @@ class Overlay:
         )
         self._cv2.putText(
             frame,
-            f"{bpm_text} {tempo_text}",
-            (x - 76, y + 48),
+            bpm_text,
+            (label_x, y + 42),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.44,
+            (230, 240, 255),
+            1,
+            self._cv2.LINE_AA,
+        )
+        self._cv2.putText(
+            frame,
+            tempo_text,
+            (label_x, y + 60),
             self._cv2.FONT_HERSHEY_SIMPLEX,
             0.38,
-            (230, 240, 255),
+            (170, 200, 215),
             1,
             self._cv2.LINE_AA,
         )
