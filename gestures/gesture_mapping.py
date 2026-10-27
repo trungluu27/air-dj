@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from config.settings import DEFAULT_SETTINGS
+from config.settings import DEFAULT_SETTINGS, GESTURE_ZONE_BOTTOM
 from core.session import DJSession
 from gestures.gesture_detector import HandFeatures
 from gestures.pinch import PinchDetector, PinchEvent, PinchState
@@ -32,7 +32,9 @@ class GestureMapper:
     * hand leaves  - the filter returns to centre on its own
 
     Only ever one hand at a time: the first one seen is locked and keeps
-    control until it leaves the frame.
+    control until it leaves the frame. "The frame" means the gesture zone - the
+    camera above the waveform panel. Lower down the picture is HUD, so a hand
+    there is behind the graphics and cannot be aimed.
 
     The mapper never touches audio timing. It only raises a request; the
     transition engine decides when that becomes audible.
@@ -42,6 +44,7 @@ class GestureMapper:
     hand_release_seconds: float = DEFAULT_SETTINGS.hand_release_seconds
     filter_deadzone: float = DEFAULT_SETTINGS.filter_deadzone
     filter_travel: float = DEFAULT_SETTINGS.filter_travel
+    gesture_zone_bottom: float = GESTURE_ZONE_BOTTOM
     detector: PinchDetector = field(default_factory=PinchDetector)
     _sweeping: bool = False
     _locked_label: str | None = None
@@ -54,7 +57,15 @@ class GestureMapper:
         now: float | None = None,
     ) -> DJSession:
         current_time = time.monotonic() if now is None else now
-        by_label = {hand.label: hand for hand in hands}
+        # Hands below the zone are dropped here rather than handled further down,
+        # so one that sinks out of it looks exactly like one that left the frame:
+        # the dropped-frame grace runs, then control is released and the filter
+        # returns to centre. There is no separate out-of-zone state to get wrong.
+        by_label = {
+            hand.label: hand
+            for hand in hands
+            if hand.wrist_y <= self.gesture_zone_bottom
+        }
 
         hand, lock_held = self._locked_hand(by_label, current_time)
         session.active_hand = self._locked_label or ""

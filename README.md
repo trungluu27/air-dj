@@ -16,6 +16,11 @@ does the DJing:
 Either hand works, and the first one in frame keeps control - a second hand
 drifting into view is ignored until the first one leaves.
 
+Hands are read in the camera above the waveform panel, and a dashed line marks
+where that stops. Lower down the picture is taken up by the HUD, so a hand there
+is behind the graphics and there is no way to see what you are aiming; a hand
+that sinks below the line is treated exactly as one that left the frame.
+
 That is the whole control surface. You do not need to know how to mix, and you do
 not need a second hand in frame.
 

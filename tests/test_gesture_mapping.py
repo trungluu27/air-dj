@@ -1,5 +1,6 @@
 import unittest
 
+from config.settings import DEFAULT_SETTINGS, GESTURE_ZONE_BOTTOM
 from core.session import DJSession
 from gestures.gesture_detector import HandFeatures
 from gestures.gesture_mapping import GestureMapper
@@ -90,9 +91,9 @@ class GestureMapperTests(unittest.TestCase):
         self.assertAlmostEqual(self.session.filter_master, 1.0)
 
     def test_holding_low_closes_the_low_pass(self) -> None:
-        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.5)], now=10.0)
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.30)], now=10.0)
 
-        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=1.0)], now=10.6)
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.60)], now=10.6)
 
         self.assertAlmostEqual(self.session.filter_master, -1.0)
 
@@ -113,7 +114,7 @@ class GestureMapperTests(unittest.TestCase):
         a hand naturally sits - cancelled its own transition the moment it became a
         hold, so the crossfader never moved and nothing said why.
         """
-        for height in (0.20, 0.30, 0.35, 0.42, 0.50, 0.65, 0.80):
+        for height in (0.10, 0.20, 0.30, 0.35, 0.42, 0.50, 0.60):
             session = DJSession()
             mapper = GestureMapper(smoothing_alpha=1.0)
             still = hand(CLOSED, wrist_y=height)
@@ -130,7 +131,7 @@ class GestureMapperTests(unittest.TestCase):
             self.assertEqual(session.pinch_state, "hold")
 
     def test_the_sweep_is_relative_to_wherever_the_pinch_started(self) -> None:
-        for anchor in (0.25, 0.5, 0.75):
+        for anchor in (0.25, 0.4, 0.6):
             session = DJSession()
             mapper = GestureMapper(smoothing_alpha=1.0)
             mapper.apply(session, [hand(CLOSED, wrist_y=anchor)], now=10.0)
@@ -241,6 +242,75 @@ class GestureMapperTests(unittest.TestCase):
 
         self.assertEqual(self.session.active_hand, "Right")
         self.assertTrue(self.session.automix_requested)
+
+    def test_a_hand_below_the_waveform_panel_is_not_read(self) -> None:
+        """The zone ends at the top edge of the waveform panel.
+
+        Below it the frame is HUD, so the hand is behind the graphics: you cannot
+        see what you are aiming and a pinch there would be guesswork.
+        """
+        below = GESTURE_ZONE_BOTTOM + 0.01
+
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=below)], now=10.0)
+
+        self.assertFalse(self.session.automix_requested)
+        self.assertEqual(self.session.active_hand, "")
+        self.assertEqual(self.session.pinch_state, "no hand")
+
+    def test_the_last_row_of_the_zone_still_counts(self) -> None:
+        """The boundary is the panel edge itself, not somewhere short of it."""
+        self.mapper.apply(
+            self.session, [hand(CLOSED, wrist_y=GESTURE_ZONE_BOTTOM)], now=10.0
+        )
+
+        self.assertTrue(self.session.automix_requested)
+        self.assertEqual(self.session.active_hand, "Right")
+
+    def test_sinking_out_of_the_zone_releases_control(self) -> None:
+        """Leaving the zone has to behave exactly like leaving the frame.
+
+        Both run the dropped-frame grace and then let go, so there is no separate
+        out-of-zone state that could leave a filter stuck open.
+        """
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.3)], now=10.0)
+        self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.0)], now=10.6)
+        self.assertAlmostEqual(self.session.filter_master, 1.0)
+
+        low = hand(CLOSED, wrist_y=GESTURE_ZONE_BOTTOM + 0.05)
+        self.mapper.apply(self.session, [low], now=10.7)
+        self.assertAlmostEqual(self.session.filter_master, 1.0, msg="grace not honoured")
+
+        self.mapper.apply(self.session, [low], now=11.4)
+
+        self.assertEqual(self.session.filter_master, 0.0)
+        self.assertEqual(self.session.active_hand, "")
+
+    def test_a_hand_in_the_zone_is_chosen_over_one_below_it(self) -> None:
+        """A hand resting in your lap must not take the lock from the one you
+        are using."""
+        self.mapper.apply(
+            self.session,
+            [
+                hand(OPEN, label="Right", wrist_y=GESTURE_ZONE_BOTTOM + 0.2),
+                hand(CLOSED, label="Left", wrist_y=0.4),
+            ],
+            now=10.0,
+        )
+
+        self.assertEqual(self.session.active_hand, "Left")
+        self.assertTrue(self.session.automix_requested)
+
+    def test_the_zone_ends_where_the_overlay_draws_the_waveform_panel(self) -> None:
+        """One number, two users. The line the overlay draws is the line the
+        mapper enforces, or the rule becomes invisible."""
+        from ui.overlay import BOTTOM_PANEL_HEIGHT, WAVEFORM_PANEL_GAP, WAVEFORM_PANEL_HEIGHT
+
+        height = DEFAULT_SETTINGS.portrait_height
+        panel_top = (
+            height - BOTTOM_PANEL_HEIGHT - WAVEFORM_PANEL_HEIGHT - WAVEFORM_PANEL_GAP
+        )
+
+        self.assertAlmostEqual(GESTURE_ZONE_BOTTOM * height, panel_top)
 
     def test_hand_height_no_longer_moves_the_volumes(self) -> None:
         self.mapper.apply(

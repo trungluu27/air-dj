@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterable
 
+from config.settings import (
+    BOTTOM_PANEL_HEIGHT,
+    GESTURE_ZONE_BOTTOM,
+    HUD_HEIGHT,
+    WAVEFORM_PANEL_GAP,
+    WAVEFORM_PANEL_HEIGHT,
+)
 from core.session import DJSession
 from gestures.gesture_detector import HandFeatures
 
@@ -9,14 +16,20 @@ if TYPE_CHECKING:
     from audio.deck import Deck
 
 
-# The dark strip along the bottom holding the filter, crossfader and transition
-# readouts. Everything above is camera, so the layout is anchored to it.
-BOTTOM_PANEL_HEIGHT = 190
-WAVEFORM_PANEL_HEIGHT = 250
-# Gap between the waveform panel and that strip. The panel sits as low as it
-# can: the middle of the frame is where the hands are, and the less of it the
-# HUD covers the easier the gesture is to aim.
-WAVEFORM_PANEL_GAP = 12
+# BOTTOM_PANEL_HEIGHT is the dark strip along the bottom holding the filter,
+# crossfader and transition readouts; the waveform panel sits as low above it as
+# the gap allows, because the middle of the frame is where the hands are and the
+# less of it the HUD covers the easier the gesture is to aim. All three come from
+# config.settings, which also derives the gesture zone from them - the hand is
+# only read above this panel, so the two have to move together.
+__all__ = [
+    "BOTTOM_PANEL_HEIGHT",
+    "WAVEFORM_PANEL_HEIGHT",
+    "WAVEFORM_PANEL_GAP",
+    "LANE_LABEL_WIDTH",
+    "Overlay",
+]
+
 # Gutter down the left of each lane holding the deck name, BPM and tempo.
 LANE_LABEL_WIDTH = 104
 
@@ -92,8 +105,33 @@ class Overlay:
         self._draw_transition(output, session)
         self._draw_pinch_meter(output, session)
         self._draw_filter(output, session.filter_master)
+        self._draw_gesture_zone(output)
         self._draw_hands(output, hands_list)
         return output
+
+    def _draw_gesture_zone(self, frame: Any) -> None:
+        """Mark where the gesture zone ends.
+
+        Hands below this line are not read, so without the line a hand that has
+        drifted low simply stops working with nothing to explain it. The waveform
+        panel's top edge is the same height but inset from both sides, so the line
+        is what says the boundary runs the full width of the frame.
+        """
+        height, width = frame.shape[:2]
+        y = height - HUD_HEIGHT
+        for x in range(0, width, 24):
+            self._cv2.line(frame, (x, y), (min(x + 12, width), y), (90, 70, 130), 1)
+        self._cv2.putText(
+            frame,
+            "GESTURE ZONE ENDS",
+            # Clear of the deck A volume column down the left edge.
+            (96, y - 10),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (140, 120, 180),
+            1,
+            self._cv2.LINE_AA,
+        )
 
     def _draw_transition(self, frame: Any, session: DJSession) -> None:
         """Show what the automix is doing.
@@ -384,9 +422,16 @@ class Overlay:
         offset = 0
         for hand in hands:
             color = (0, 255, 255) if hand.label == "Left" else (255, 0, 210)
+            note = ""
+            if hand.wrist_y > GESTURE_ZONE_BOTTOM:
+                # Seen by the tracker but below the line, so the mapper ignores it.
+                # Saying so is the difference between a rule and a dead app.
+                color = (120, 110, 135)
+                note = "  OUT OF ZONE"
             self._cv2.putText(
                 frame,
-                f"{hand.label.upper()}  FINGERS:{hand.finger_count}  X:{hand.wrist_x:.2f} Y:{hand.wrist_y:.2f}",
+                f"{hand.label.upper()}  FINGERS:{hand.finger_count}  "
+                f"X:{hand.wrist_x:.2f} Y:{hand.wrist_y:.2f}{note}",
                 (x, y + offset),
                 self._cv2.FONT_HERSHEY_SIMPLEX,
                 0.48,

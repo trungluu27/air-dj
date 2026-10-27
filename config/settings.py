@@ -52,3 +52,17 @@ RING_PIP = 14
 PINKY_PIP = 18
 
 DEFAULT_SETTINGS = Settings()
+
+# Overlay layout, in pixels of the portrait frame. These live here rather than in
+# ui/overlay because the gesture zone is derived from them: the hand is only read
+# above the waveform panel, so the drawing and the detection cannot be allowed to
+# drift apart.
+BOTTOM_PANEL_HEIGHT = 190
+WAVEFORM_PANEL_HEIGHT = 250
+WAVEFORM_PANEL_GAP = 12
+HUD_HEIGHT = BOTTOM_PANEL_HEIGHT + WAVEFORM_PANEL_HEIGHT + WAVEFORM_PANEL_GAP
+
+# Hands are only read above the top edge of the waveform panel. Below it the frame
+# is HUD: the hand is behind the graphics, so you cannot see what you are aiming,
+# and a gesture there would be guesswork.
+GESTURE_ZONE_BOTTOM = 1.0 - HUD_HEIGHT / DEFAULT_SETTINGS.portrait_height
