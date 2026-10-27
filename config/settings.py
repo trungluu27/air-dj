@@ -13,7 +13,11 @@ class Settings:
     output_channels: int = 2
     portrait_width: int = 720
     portrait_height: int = 1280
-    recording_fps: int = 5
+    # Matches the 0.1s video timer. Frames are placed in the recording by
+    # timestamp, so this only decides the grid they land on: below the rate the
+    # loop achieves, real frames would be thrown away, above it they are padded
+    # out with repeats.
+    recording_fps: int = 10
     transition_beats: int = 16
     pinch_close_ratio: float = 0.25
     pinch_open_ratio: float = 0.40

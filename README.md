@@ -142,6 +142,10 @@ tests/
 - Audio playback runs on the local machine via SoundDevice.
 - Webcam frames are captured locally with OpenCV and displayed as an annotated Gradio stream.
 - Recordings are written to `assets/recordings/` and exposed in the `Download Recording` control.
+  Frames go into the file by timestamp rather than in arrival order, because the
+  video loop does not hit its target rate reliably and the audio stream always
+  does: stacking frames up regardless made the picture run at the wrong speed and
+  slide further behind the sound the longer the take.
 - MediaPipe may report mirrored hand labels depending on browser/camera behavior.
   This no longer matters for control: either hand can pinch, and the right hand
   simply takes priority when both are in frame.

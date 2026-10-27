@@ -99,6 +99,20 @@ opens the stream when a track is loaded and again when a transition is
 requested, and the overlay and status line name the problem if it is still not
 running. `tests/test_runtime_audio.py` pins all of it.
 
+**Recording places frames by timestamp, not in arrival order.** The two sides of
+a recording come off the two clocks: audio from the output stream is exactly real
+time, video from the Gradio timer arrives at whatever rate the machine manages.
+Writing those frames back to back into a file stamped `recording_fps` made the
+picture play at `real_rate / fps` speed, so it drifted further behind the sound
+every second and `-shortest` threw the tail away — measured at 2.00x and 20 s of
+drift over a 20 s take. `VideoAudioRecorder` now puts each frame in the slot its
+timestamp belongs to, repeating the previous picture over slots the loop missed
+and holding the last one until `stop()`, and pads the audio with silence when the
+stream starts late or stops mid-take. `recording_fps` is therefore only the grid
+frames land on; it is set to the timer's rate so no real frame is discarded.
+`tests/test_recorder.py:RecordingStaysInSyncTests` pins it at loop rates either
+side of that grid.
+
 **Design rule.** The gesture layer only raises requests. Every musical decision — when a mix starts, tempo, cue point, bass swap, fader curve — belongs to `core/automix.py`.
 
 **Audio pipeline**: `AudioPlayer` runs on a background thread via SoundDevice. `Mixer` is protected by `RLock` so the Gradio frame-processing thread and audio callback thread don't race.
