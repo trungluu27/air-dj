@@ -109,6 +109,12 @@ class AirDJRuntime:
             result = self.tracker.process_rgb(frame)
             features = [hand.features for hand in result.hands]
             self.mapper.apply(self.session, features, now=time.monotonic())
+            if self.session.automix_requested:
+                # A transition only advances on the audio callback, so arming one
+                # with no stream open would leave it waiting for a downbeat that
+                # never arrives - silently, which is how this was first missed.
+                self._ensure_audio()
+            self.session.audio_live = self._audio_is_live
             self.mixer.apply_session(self.session)
             annotated = self.overlay.draw(
                 result.annotated_frame,
@@ -132,12 +138,36 @@ class AirDJRuntime:
             self.mixer.load_deck(deck_name, path)
             self.mixer.apply_session(self.session)
             logger.info("track_loaded", extra={"deck": deck_name, "path": str(path)})
-            return self._message_with_decks(f"Deck {deck_name}: loaded {path.name}")
+            # Opening the output here rather than waiting for the button: the
+            # transition engine runs on the audio callback, so without a stream a
+            # pinch arms a transition that then never advances. Loading a track is
+            # unambiguously a request to play audio, so there is nothing to ask.
+            audio_note = self._ensure_audio()
+            return self._message_with_decks(
+                f"Deck {deck_name}: loaded {path.name}{audio_note}"
+            )
         except Exception as exc:
             logger.exception("Failed to load track")
             return self._message_with_decks(
                 f"Deck {deck_name}: failed to load {path.name}: {exc}"
             )
+
+    def _ensure_audio(self) -> str:
+        """Open the output stream if it is not already. Returns a note to append
+        to the caller's message, empty when nothing needed doing."""
+        assert self.player is not None
+        if self.player.is_running:
+            return ""
+        try:
+            self.player.start()
+            return ". Audio output started."
+        except Exception as exc:
+            logger.exception("Failed to start audio")
+            return f". Audio output failed: {exc}"
+
+    @property
+    def _audio_is_live(self) -> bool:
+        return self.player is not None and self.player.is_running
 
     def set_transition_beats(self, beats: float) -> str:
         length = max(4, int(round(beats / 4.0)) * 4)
@@ -224,6 +254,10 @@ class AirDJRuntime:
 
     def _transition_line(self) -> str:
         session = self.session
+        if session.transition_phase in ("armed", "running") and not self._audio_is_live:
+            # Without a stream the engine is frozen wherever it was. Say so, rather
+            # than showing a countdown that is not counting.
+            return "Audio output is not running - the mix cannot start. Click Start Audio."
         if session.transition_phase == "armed":
             return f"Cueing {session.transition_label} - waiting for the downbeat"
         if session.transition_phase == "running":

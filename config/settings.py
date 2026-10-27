@@ -26,6 +26,11 @@ class Settings:
     # enough to ride out a dropped frame, short enough that swapping hands
     # deliberately does not feel stuck.
     hand_release_seconds: float = 0.5
+    # Filter sweep, measured as travel from where the pinch closed rather than
+    # from the middle of the frame. The deadzone absorbs tremor; full travel is
+    # about a forearm's movement.
+    filter_deadzone: float = 0.05
+    filter_travel: float = 0.22
 
 
 WRIST = 0

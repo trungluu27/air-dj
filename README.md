@@ -9,8 +9,12 @@ does the DJing:
   every pinch after that runs a full transition across to the other deck.
 - **Pinch and hold, then raise or lower your hand** - sweep a filter. Up thins
   the track out with a high-pass, down muffles it with a low-pass. Let go and it
-  returns to centre on its own. A hold also calls off the transition the pinch
-  asked for, so holding never mixes by accident.
+  returns to centre on its own. The sweep is measured from wherever your hand was
+  when you pinched, so holding still does nothing at all, whatever height you
+  hold your hand at; only a deliberate move calls off the mix the pinch asked for.
+
+Either hand works, and the first one in frame keeps control - a second hand
+drifting into view is ignored until the first one leaves.
 
 That is the whole control surface. You do not need to know how to mix, and you do
 not need a second hand in frame.

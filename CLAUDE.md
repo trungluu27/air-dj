@@ -84,12 +84,20 @@ pins this.
 
 **Gesture mapping** (in `GestureMapper.apply()`), deliberately tiny:
 - Pinch closing edge → `session.automix_requested`
-- Pinch promoted to a hold → withdraws that request (`automix_cancel_requested`) and sweeps `session.filter_master` from hand height; the centre of the frame is a deadzone
+- Pinch held **and moved** → withdraws that request (`automix_cancel_requested`) and sweeps `session.filter_master`. The sweep is travel from where the pinch closed (`PinchEvent.travel_y`), never from the frame centre: a hand held still at chest height is nowhere near the middle, and anchoring to the frame made an ordinary pinch cancel its own transition with nothing on screen to say why. Holding still is always a no-op
+- Only one hand at a time → `GestureMapper` locks onto the first hand seen and ignores any other until it leaves, with a `hand_release_seconds` grace so a dropped frame does not hand control over
 - Hand leaves frame or pinch released → the filter returns to centre
 
 The previous mapping (hand height → volume, two-hand midpoint → crossfader, finger count → play/pause/sync) was removed: it put four meanings on one noisy signal, and an open palm meaning "play" made simply raising a hand start the music.
 
 **Transport ownership.** Once `TransitionEngine.owns_transport` is set, `Mixer.apply_session` reverses direction: deck play states and the crossfader are mirrored *into* the session for display rather than written *from* it. Writing stale video-frame state over the engine would cut a transition off the moment it began.
+
+**The engine only advances on the audio callback.** With no output stream open
+it never advances at all: a pinch arms a transition that waits forever for a
+downbeat, the crossfader never moves, and nothing says why. `AirDJRuntime`
+opens the stream when a track is loaded and again when a transition is
+requested, and the overlay and status line name the problem if it is still not
+running. `tests/test_runtime_audio.py` pins all of it.
 
 **Design rule.** The gesture layer only raises requests. Every musical decision — when a mix starts, tempo, cue point, bass swap, fader curve — belongs to `core/automix.py`.
 

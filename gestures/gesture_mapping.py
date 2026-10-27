@@ -9,10 +9,6 @@ from core.session import DJSession
 from gestures.gesture_detector import HandFeatures
 from gestures.pinch import PinchDetector, PinchEvent, PinchState
 
-# The middle of the frame is filter-off; a hand has to travel a little way out of
-# it before the sweep engages, so a hold that is only meant to cancel a transition
-# does not also open the filter.
-FILTER_DEADZONE = 0.08
 
 
 @dataclass
@@ -44,6 +40,8 @@ class GestureMapper:
 
     smoothing_alpha: float = DEFAULT_SETTINGS.filter_smoothing_alpha
     hand_release_seconds: float = DEFAULT_SETTINGS.hand_release_seconds
+    filter_deadzone: float = DEFAULT_SETTINGS.filter_deadzone
+    filter_travel: float = DEFAULT_SETTINGS.filter_travel
     detector: PinchDetector = field(default_factory=PinchDetector)
     _sweeping: bool = False
     _locked_label: str | None = None
@@ -151,16 +149,24 @@ class GestureMapper:
         self._sweeping = False
 
     def _filter_target(self, event: PinchEvent) -> float:
+        """How far the filter is swept, from how far the hand has moved.
+
+        Measured against where the pinch closed, not against the middle of the
+        frame. Anchoring to the frame meant a hand held perfectly still anywhere
+        but dead centre read as a deliberate sweep - so an ordinary pinch at chest
+        height cancelled its own transition the moment it became a hold, and the
+        crossfader never moved.
+        """
         if not event.holding:
             return 0.0
-        # wrist_y is 0 at the top of the frame: raising the hand opens a high-pass
-        # and thins the track out, lowering it closes a low-pass and muffles it.
-        offset = 0.5 - event.hold_y
-        if abs(offset) < FILTER_DEADZONE:
+        # wrist_y grows downwards, so a negative travel is a hand raised: that
+        # opens a high-pass and thins the track out, lowering it muffles instead.
+        offset = -event.travel_y
+        if abs(offset) < self.filter_deadzone:
             return 0.0
-        span = max(1e-6, 0.5 - FILTER_DEADZONE)
+        span = max(1e-6, self.filter_travel - self.filter_deadzone)
         sign = 1.0 if offset > 0.0 else -1.0
-        return sign * min(1.0, (abs(offset) - FILTER_DEADZONE) / span)
+        return sign * min(1.0, (abs(offset) - self.filter_deadzone) / span)
 
     def _smooth(self, previous: float, new_value: float) -> float:
         alpha = max(0.0, min(1.0, self.smoothing_alpha))

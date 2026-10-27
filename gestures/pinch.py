@@ -37,7 +37,20 @@ class PinchEvent:
     held_for: float = 0.0
     hold_x: float = 0.0
     hold_y: float = 0.0
+    anchor_x: float = 0.0
+    anchor_y: float = 0.0
     ratio: float = 1.0
+
+    @property
+    def travel_y(self) -> float:
+        """How far the hand has moved since the pinch closed, downwards positive.
+
+        A hold has to be measured against where it started, not against the middle
+        of the frame: a hand resting naturally at chest height is nowhere near the
+        centre, and treating that offset as a deliberate move made holding still
+        read as a gesture.
+        """
+        return self.hold_y - self.anchor_y
 
 
 @dataclass
@@ -59,6 +72,7 @@ class PinchDetector:
     _closed_at: dict[str, float] = field(default_factory=dict)
     _promoted: dict[str, bool] = field(default_factory=dict)
     _last_close_at: dict[str, float] = field(default_factory=dict)
+    _anchor: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     def update(self, hand: HandFeatures, now: float) -> PinchEvent:
         label = hand.label
@@ -73,17 +87,21 @@ class PinchDetector:
                 self._state[label] = PinchState.CLOSED
                 self._closed_at[label] = now
                 self._promoted[label] = True
+                self._anchor[label] = (hand.wrist_x, hand.wrist_y)
                 return PinchEvent(label=label, state=PinchState.CLOSED, ratio=ratio)
             self._state[label] = PinchState.CLOSED
             self._closed_at[label] = now
             self._promoted[label] = False
             self._last_close_at[label] = now
+            self._anchor[label] = (hand.wrist_x, hand.wrist_y)
             return PinchEvent(
                 label=label,
                 state=PinchState.CLOSED,
                 closed_edge=True,
                 hold_x=hand.wrist_x,
                 hold_y=hand.wrist_y,
+                anchor_x=hand.wrist_x,
+                anchor_y=hand.wrist_y,
                 ratio=ratio,
             )
 
@@ -94,6 +112,9 @@ class PinchDetector:
             hold_started = is_hold and not self._promoted.get(label, False)
             if hold_started:
                 self._promoted[label] = True
+            anchor_x, anchor_y = self._anchor.get(
+                label, (hand.wrist_x, hand.wrist_y)
+            )
             return PinchEvent(
                 label=label,
                 state=PinchState.CLOSED,
@@ -102,6 +123,8 @@ class PinchDetector:
                 held_for=held_for,
                 hold_x=hand.wrist_x,
                 hold_y=hand.wrist_y,
+                anchor_x=anchor_x,
+                anchor_y=anchor_y,
                 ratio=ratio,
             )
 
@@ -126,6 +149,7 @@ class PinchDetector:
         was_closed = self._state.pop(label, PinchState.OPEN) is PinchState.CLOSED
         self._closed_at.pop(label, None)
         self._promoted.pop(label, None)
+        self._anchor.pop(label, None)
         return PinchEvent(label=label, released=was_closed)
 
     def tracked_labels(self) -> list[str]:

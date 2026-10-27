@@ -20,6 +20,16 @@ class AudioPlayer:
     def __post_init__(self) -> None:
         self._stream = None
 
+    @property
+    def is_running(self) -> bool:
+        """Whether the output stream is open.
+
+        Worth checking before anything that depends on audio time: the transition
+        engine is advanced from this stream's callback, so with no stream its
+        timeline simply never moves.
+        """
+        return self._stream is not None
+
     def start(self) -> None:
         if self._stream is not None:
             return

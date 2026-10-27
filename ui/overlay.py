@@ -108,7 +108,12 @@ class Overlay:
         bar_width = width - 240
         phase = session.transition_phase
 
-        if phase == "armed":
+        if not session.audio_live and phase in ("armed", "running"):
+            # The engine only moves on the audio callback. With no stream open it
+            # is frozen, and a countdown that is not counting looks like a hang.
+            label = "NO AUDIO OUTPUT - CLICK START AUDIO"
+            color = (80, 120, 255)
+        elif phase == "armed":
             label = f"CUEING {session.transition_label} - waiting for the downbeat"
             color = (0, 210, 255)
         elif phase == "running":
@@ -130,7 +135,7 @@ class Overlay:
             self._cv2.LINE_AA,
         )
         self._cv2.line(frame, (x, y + 20), (x + bar_width, y + 20), (54, 32, 72), 8)
-        if phase == "running":
+        if phase == "running" and session.audio_live:
             filled = int(bar_width * max(0.0, min(1.0, session.transition_progress)))
             self._cv2.line(frame, (x, y + 20), (x + filled, y + 20), color, 8)
             # The halfway mark is where the bass hands over, which is the moment

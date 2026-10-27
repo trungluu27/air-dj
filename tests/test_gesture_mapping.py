@@ -96,14 +96,49 @@ class GestureMapperTests(unittest.TestCase):
 
         self.assertAlmostEqual(self.session.filter_master, -1.0)
 
-    def test_the_middle_of_the_frame_is_a_deadzone(self) -> None:
-        """A hold meant only to cancel a transition should not also sweep the
-        filter, so the hand has to travel out of the centre first."""
+    def test_small_movements_sit_inside_a_deadzone(self) -> None:
+        """Tremor is not a gesture."""
         self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.5)], now=10.0)
 
         self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.53)], now=10.6)
 
         self.assertEqual(self.session.filter_master, 0.0)
+
+    def test_holding_still_off_centre_does_not_cancel_the_mix(self) -> None:
+        """The sweep is measured from where the pinch closed, not from the middle
+        of the frame.
+
+        Anchoring to the frame meant a hand held perfectly still anywhere but dead
+        centre read as a deliberate sweep. A pinch at chest height - which is where
+        a hand naturally sits - cancelled its own transition the moment it became a
+        hold, so the crossfader never moved and nothing said why.
+        """
+        for height in (0.20, 0.30, 0.35, 0.42, 0.50, 0.65, 0.80):
+            session = DJSession()
+            mapper = GestureMapper(smoothing_alpha=1.0)
+            still = hand(CLOSED, wrist_y=height)
+
+            mapper.apply(session, [still], now=10.0)
+            for moment in (10.4, 10.8, 11.2):
+                mapper.apply(session, [still], now=moment)
+
+            self.assertTrue(
+                session.automix_requested, f"a still hand at y={height} cancelled its mix"
+            )
+            self.assertFalse(session.automix_cancel_requested)
+            self.assertEqual(session.filter_master, 0.0)
+            self.assertEqual(session.pinch_state, "hold")
+
+    def test_the_sweep_is_relative_to_wherever_the_pinch_started(self) -> None:
+        for anchor in (0.25, 0.5, 0.75):
+            session = DJSession()
+            mapper = GestureMapper(smoothing_alpha=1.0)
+            mapper.apply(session, [hand(CLOSED, wrist_y=anchor)], now=10.0)
+
+            mapper.apply(session, [hand(CLOSED, wrist_y=anchor - 0.14)], now=10.6)
+
+            self.assertGreater(session.filter_master, 0.3, f"anchored at {anchor}")
+            self.assertLess(session.filter_master, 0.9, f"anchored at {anchor}")
 
     def test_releasing_the_pinch_returns_the_filter_to_centre(self) -> None:
         self.mapper.apply(self.session, [hand(CLOSED, wrist_y=0.5)], now=10.0)
