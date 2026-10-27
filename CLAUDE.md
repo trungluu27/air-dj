@@ -99,6 +99,17 @@ opens the stream when a track is loaded and again when a transition is
 requested, and the overlay and status line name the problem if it is still not
 running. `tests/test_runtime_audio.py` pins all of it.
 
+**Reset rebuilds components rather than clearing fields.** `AirDJRuntime.reset()`
+replaces the session, mixer, mapper, recorder and player with new ones. Most of
+what a reset has to undo is invisible — an armed transition, a loaded beat grid, a
+biquad's charged filter state, the hand the mapper has locked onto, MediaPipe's
+tracking history — and clearing it field by field means one of them is eventually
+missed, leaving an app that looks freshly started and does not behave like it. The
+player has to be rebuilt with them because it holds the mixer by reference and the
+recorder by audio sink. The single exception is a recording still in progress:
+that is already half written to disk, so it is stopped, saved and offered for
+download. `tests/test_runtime_reset.py` pins each of those.
+
 **Recording places frames by timestamp, not in arrival order.** The two sides of
 a recording come off the two clocks: audio from the output stream is exactly real
 time, video from the Gradio timer arrives at whatever rate the machine manages.

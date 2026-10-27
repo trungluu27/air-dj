@@ -23,6 +23,23 @@ logger = logging.getLogger(__name__)
 # frame, session json, automix line, transition progress, crossfader, filter,
 # deck A line, deck B line
 FrameOutputs = tuple[Any, dict[str, object], str, float, float, float, str, str]
+# message, then everything a frame publishes, then transition beats, the two
+# upload slots and the recording download.
+ResetOutputs = tuple[
+    str,
+    Any,
+    dict[str, object],
+    str,
+    float,
+    float,
+    float,
+    str,
+    str,
+    int,
+    None,
+    None,
+    str | None,
+]
 # A pinch can be over in a fifth of a second, so the loop has to sample faster than
 # the old 0.2s or a quick tap would fall between two frames entirely.
 CAMERA_REFRESH_SECONDS = 0.1
@@ -208,6 +225,69 @@ class AirDJRuntime:
         )
         return message, str(result.output_path)
 
+    def reset(self) -> ResetOutputs:
+        """Put everything back to how it was when the app started.
+
+        Components are rebuilt rather than cleared field by field. A half-finished
+        transition, a loaded beat grid, a biquad's filter state, a hand the mapper
+        has locked onto and MediaPipe's own tracking history are all state that is
+        easy to miss one of by hand, and a reset that leaves some of it behind is
+        worse than none: it looks clean and does not behave that way.
+
+        The one thing not thrown away is a recording in progress. That is the
+        user's work and it is already half written to disk, so it is finished off
+        and offered for download instead.
+        """
+        notes: list[str] = []
+
+        if self.recorder.is_recording:
+            result = self.recorder.stop()
+            self.last_recording_path = result.output_path
+            notes.append(f"recording saved as {result.output_path.name}")
+        else:
+            self.last_recording_path = None
+
+        if self.player is not None and self.player.is_running:
+            self.player.stop()
+            notes.append("audio output stopped")
+        if self.camera_capture is not None:
+            self.camera_capture.release()
+            self.camera_capture = None
+            notes.append("camera stopped")
+        if self.tracker is not None:
+            self.tracker.close()
+            self.tracker = None
+        self.overlay = None
+
+        self.session = DJSession()
+        self.mixer = Mixer(sample_rate=self.mixer.sample_rate)
+        self.mapper = GestureMapper()
+        self.recorder = VideoAudioRecorder(
+            self.recorder.output_dir,
+            fps=self.recorder.fps,
+            sample_rate=self.recorder.sample_rate,
+        )
+        # The player holds the mixer by reference and the recorder by sink, so it
+        # has to be rebuilt around the new ones rather than kept.
+        self.player = AudioPlayer(self.mixer)
+        self.player.audio_sinks.append(self.recorder.write_audio)
+        self.session.audio_live = self._audio_is_live
+
+        detail = f" ({', '.join(notes)})" if notes else ""
+        download = (
+            str(self.last_recording_path) if self.last_recording_path else None
+        )
+        return (
+            f"Reset to the starting state{detail}. Load tracks and click Start Camera.",
+            *self._outputs(
+                _placeholder_frame("Click Start Camera"), self.session.as_dict()
+            ),
+            self.session.automix_beats,
+            None,
+            None,
+            download,
+        )
+
     def _ensure_video_components(self) -> None:
         if self.tracker is None:
             self.tracker = HandTracker()
@@ -376,6 +456,7 @@ def create_demo(runtime: AirDJRuntime | None = None):
             stop_audio = gr.Button("Stop Audio")
             start_recording = gr.Button("Start Recording")
             stop_recording = gr.Button("Stop Recording")
+            reset_all = gr.Button("Reset", variant="stop")
         message = gr.Textbox(label="Message", interactive=False)
         recording_download = gr.File(label="Download Recording", interactive=False)
 
@@ -432,6 +513,12 @@ def create_demo(runtime: AirDJRuntime | None = None):
         stop_recording.click(
             app.stop_recording,
             outputs=[message, recording_download],
+            queue=False,
+        )
+        reset_all.click(
+            app.reset,
+            outputs=[message, *frame_outputs, transition_beats, track_a, track_b,
+                     recording_download],
             queue=False,
         )
 

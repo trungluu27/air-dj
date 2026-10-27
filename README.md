@@ -79,6 +79,9 @@ http://127.0.0.1:7860
      return it to centre.
 7. Optionally drag `Transition length (beats)` to make mixes shorter or longer.
 8. Click `Start Recording` / `Stop Recording` to save a vertical MP4. If audio is playing, the mixed output is merged into the recording.
+9. Click `Reset` to go back to the state the app starts in: both decks unloaded,
+   any mix in flight abandoned, the filter centred, the camera and audio output
+   stopped. A recording still running is finished off and kept rather than lost.
 
 Beat and BPM analysis uses `librosa`, with a lightweight NumPy fallback for simple
 pulse-like tracks. The detected beats are fitted to a constant-interval grid by
